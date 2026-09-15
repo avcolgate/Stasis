@@ -6,6 +6,8 @@ enum ChargingMode {
     static func current(battery: BatteryMetrics) -> Self {
         // Wattage is only polled while the menu is open; IOKit supplies live power state.
         guard battery.externalConnected else { return .discharging }
-        return battery.isCharging ? .charging : .pluggedIn
+        if battery.isCharging { return .charging }
+        if let current = battery.osBatteryCurrent, current < -0.05 { return .discharging }
+        return .pluggedIn
     }
 }

@@ -132,6 +132,15 @@ class IOKitService {
         batteryMetrics.externalConnected =
             getPropertyValue(batteryService, key: "ExternalConnected") ?? false
 
+        let properties = batteryProperties()
+        if let current = (properties["InstantAmperage"] ?? properties["Amperage"]) as? NSNumber,
+           let voltage = properties["Voltage"] as? NSNumber {
+            batteryMetrics.osBatteryCurrent = BatteryReading.signedAmperage(current)
+            batteryMetrics.batteryCurrent = BatteryReading.signedAmperage(current)
+            batteryMetrics.batteryVoltage = voltage.doubleValue / 1000
+            batteryMetrics.batteryPower = batteryMetrics.batteryCurrent * batteryMetrics.batteryVoltage
+        }
+
         adapterMetrics.adapterConnected = isAdapterConnected()
 
         if let temp = getBatteryTemperature(powerInfo: powerInfo) {

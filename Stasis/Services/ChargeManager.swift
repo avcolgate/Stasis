@@ -8,6 +8,15 @@ import smc_power
 @MainActor
 @Observable
 class ChargeManager {
+    static let nativeBackend = try? PowerUIChargeBackend()
+    private let nativeSession: NativeChargeSession?
+    var usesNativeControl: Bool { nativeSession != nil }
+    var canForceDischarge: Bool {
+        !usesNativeControl && batteryService.deviceCapabilities.chargingControl
+            && batteryService.deviceCapabilities.adapterControl
+            && !batteryService.deviceCapabilities.firmwareChargeControl
+            && !ChargingHelperManager.shared.firmwareChargeControl
+    }
     private let batteryService: BatteryService
 
     private var metricsObservation: Task<Void, Never>?
@@ -30,6 +39,9 @@ class ChargeManager {
 
     init(batteryService: BatteryService) {
         self.batteryService = batteryService
+        nativeSession = Self.nativeBackend.map { NativeChargeSession(backend: $0) }
+        do { try nativeSession?.restore() }
+        catch { Defaults[.chargingControlError] = error.localizedDescription }
         startObservingMetrics()
         startObservingSettings()
     }
@@ -82,6 +94,23 @@ class ChargeManager {
             }
             clearCachedState()
             stateWasCleared = true
+        }
+
+        if let nativeSession {
+            do {
+                if Defaults[.manageCharging] {
+                    if controlState.batteryPercentage >= 100 { chargeLimitOverrideActive = false }
+                    try nativeSession.apply(chargeLimitOverrideActive ? 100 : Defaults[.chargeLimit])
+                } else {
+                    chargeLimitOverrideActive = false
+                    try nativeSession.restore()
+                }
+                Defaults[.chargingControlError] = ""
+            } catch {
+                Defaults[.chargingControlError] = error.localizedDescription
+                logger.error("Native charge limit failed: \(error.localizedDescription, privacy: .public)")
+            }
+            return
         }
 
         if batteryService.deviceCapabilities.firmwareChargeControl || ChargingHelperManager.shared.firmwareChargeControl {
@@ -290,12 +319,17 @@ class ChargeManager {
     }
 
     func toggleChargeLimitOverride() {
+        guard Defaults[.manageCharging], batteryService.controlState.adapterConnected else { return }
+        let previousOverride = chargeLimitOverrideActive
         chargeLimitOverrideActive.toggle()
         evaluate(controlState: batteryService.controlState)
+        if usesNativeControl && !Defaults[.chargingControlError].isEmpty {
+            chargeLimitOverrideActive = previousOverride
+        }
     }
 
     func toggleForceDischarge() {
-        guard !batteryService.deviceCapabilities.firmwareChargeControl, !ChargingHelperManager.shared.firmwareChargeControl else { return }
+        guard canForceDischarge else { return }
         forceDischargeActive.toggle()
         evaluate(controlState: batteryService.controlState)
     }
@@ -306,5 +340,9 @@ class ChargeManager {
         settingsObservation?.cancel()
         settingsObservation = nil
         updateSleepAssertion(shouldPreventSleep: false)
+    }
+
+    func restoreNativeLimit() throws {
+        try nativeSession?.restore()
     }
 }

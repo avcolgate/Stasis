@@ -101,6 +101,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        do {
+            try chargeManager?.restoreNativeLimit()
+            chargeManager?.stop()
+            return .terminateNow
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not restore your charge limit"
+            alert.informativeText = error.localizedDescription + " Check System Settings → Battery before quitting."
+            alert.addButton(withTitle: "Keep Stasis Open")
+            alert.runModal()
+            return .terminateCancel
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
         viewModel.menuWillOpen()
     }

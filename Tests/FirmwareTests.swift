@@ -7,6 +7,8 @@ import Foundation
             print("PASS: \(message)")
         }
         var registers: [FirmwareChargeKey: Data] = [.activation: Data([2]), .upper: Data([80,0,0,0]), .lower: Data([75,0,0,0])]
+        require(try FirmwareChargeKey.upper.numericValue(Data([80,0,0,0])) == 80, "typed firmware threshold encoding")
+        require(try FirmwareChargeKey.activation.numericValue(Data([2])) == 2, "typed firmware activation encoding")
         let original = try FirmwareChargeLimit.read { registers[$0, default: Data()] }
         require(original.upper == 80 && original.lower == 75 && original.active, "decode little-endian firmware state")
         var operations: [FirmwareChargeKey] = []

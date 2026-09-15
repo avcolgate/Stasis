@@ -30,6 +30,14 @@ struct RegressionTests {
         check(tracker.update(isCharging: false, valid: true, notificationsEnabled: true) == false, "pause after reenable")
         check(tracker.update(isCharging: true, valid: true, notificationsEnabled: true) == true, "resume after reenable")
         var battery = BatteryMetrics()
+        var connection = PowerConnectionTracker()
+        check(connection.update(connected: true, valid: true, enabled: true) == nil, "connection startup is silent")
+        check(connection.update(connected: false, valid: true, enabled: true) == false, "unplug emits even when charging already paused at limit")
+        check(connection.update(connected: true, valid: true, enabled: true) == true, "plug emits even when charging remains paused")
+        check(connection.update(connected: true, valid: true, enabled: true) == nil, "connection readings deduplicate")
+        check(connection.update(connected: false, valid: false, enabled: true) == nil, "invalid connection reading ignored")
+        check(connection.update(connected: false, valid: true, enabled: false) == nil, "disabled connection notification suppressed")
+        check(connection.update(connected: false, valid: true, enabled: true) == nil, "connection enable does not replay")
         battery.externalConnected = true
         battery.isCharging = true
         battery.batteryPower = -12
@@ -40,6 +48,14 @@ struct RegressionTests {
         check(ChargingMode.current(battery: battery) == .discharging, "unplug updates icon despite cached adapter wattage")
         battery.isCharging = true
         check(ChargingMode.current(battery: battery) == .discharging, "disconnected power takes precedence over stale charging state")
+        battery.externalConnected = true
+        battery.isCharging = false
+        battery.osBatteryCurrent = -2.08
+        check(ChargingMode.current(battery: battery) == .discharging, "live OS current identifies discharge while attached")
+        check(PowerSource.current(battery: battery, adapter: AdapterMetrics()) == .battery, "zero adapter watts with live discharge uses battery flow")
+        battery.osBatteryCurrent = 0
+        check(ChargingMode.current(battery: battery) == .pluggedIn, "stale SMC wattage cannot override idle OS current")
+        check(BatteryReading.signedAmperage(NSNumber(value: UInt64.max - 1843)) == -1.844, "unsigned OS current decodes negative milliamps")
         exit(failures == 0 ? 0 : 1)
     }
 }

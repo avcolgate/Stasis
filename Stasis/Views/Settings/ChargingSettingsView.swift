@@ -46,8 +46,10 @@ struct ChargingSettingsView: View {
     }
 
     private var hasAnyControl: Bool {
-        hasChargingControl || hasFirmwareControl
+        hasNativeControl || hasChargingControl || hasFirmwareControl
     }
+
+    private var hasNativeControl: Bool { ChargeManager.nativeBackend != nil }
 
     private var sailingResumePercentage: Int {
         chargeLimit - sailingModeLimit
@@ -65,7 +67,7 @@ struct ChargingSettingsView: View {
                         }
                     )
                 )
-                .disabled(!hasAnyControl || helperManager.helperStatus == .requiresApproval)
+                .disabled(!hasAnyControl || (!hasNativeControl && helperManager.helperStatus == .requiresApproval))
 
                 if helperManager.helperStatus == .installed && !manageCharging {
                     Button("Remove Charging Helper") {
@@ -101,6 +103,13 @@ struct ChargingSettingsView: View {
                 }
 
                 if manageCharging {
+                    if let backend = ChargeManager.nativeBackend {
+                        Picker("Charge limit", selection: $chargeLimit) {
+                            ForEach(backend.limits, id: \.self) { value in
+                                Text("\(value)%").tag(value)
+                            }
+                        }
+                    } else {
                     LabeledContent {
                         HStack(spacing: 8) {
                             Slider(
@@ -117,6 +126,10 @@ struct ChargingSettingsView: View {
                     } label: {
                         Text("Charge limit")
                     }
+                    }
+                }
+                if !chargingControlError.isEmpty {
+                    Text(chargingControlError).foregroundStyle(.red)
                 }
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -126,12 +139,14 @@ struct ChargingSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             } footer: {
-                if !hasAnyControl {
+                if hasNativeControl {
+                    Text("Uses macOS native charge limits and OS battery readings. Changes may take about a minute. Charge Limit Override temporarily requests 100%; cancelling, unplugging, or quitting restores the limit. Sailing, force discharge, and heat protection are unavailable with this backend.")
+                } else if !hasAnyControl {
                     Text("Stasis cannot pause charging while keeping adapter power on this Mac. Use the charge limit in System Settings → Battery. Charging notifications still work.")
                 }
             }
 
-            if manageCharging && hasFirmwareControl {
+            if manageCharging && hasFirmwareControl && !hasNativeControl {
                 Section("Firmware Charge Control") {
                     Toggle("Enable sailing mode", isOn: $sailingMode)
                     if sailingMode {
@@ -145,7 +160,7 @@ struct ChargingSettingsView: View {
                 }
             }
 
-            if manageCharging && !hasFirmwareControl {
+            if manageCharging && !hasFirmwareControl && !hasNativeControl {
                 Section {
                     Toggle("Automatic discharge", isOn: $automaticDischarge)
                         .disabled(!hasAdapterControl)
@@ -308,6 +323,13 @@ struct ChargingSettingsView: View {
     }
 
     private func toggleManageCharging(_ enabled: Bool) {
+        if let backend = ChargeManager.nativeBackend {
+            if enabled && !backend.limits.contains(chargeLimit) {
+                chargeLimit = (try? backend.readLimit()) ?? 80
+            }
+            manageCharging = enabled
+            return
+        }
         do {
             if enabled {
                 try helperManager.install()

@@ -90,10 +90,11 @@ public struct SMCBattery: Sendable {
     }
 
     private func writeFirmwareKey(_ key: FirmwareChargeKey, data: Data) throws {
+        let value = try key.numericValue(data)
         switch key {
-        case .activation: try SMCKit.shared.writeData("bfF0", data)
-        case .upper: try SMCKit.shared.writeData("bfD0", data)
-        case .lower: try SMCKit.shared.writeData("bfE0", data)
+        case .activation: try SMCKit.shared.write("bfF0", UInt8(value))
+        case .upper: try SMCKit.shared.write("bfD0", value)
+        case .lower: try SMCKit.shared.write("bfE0", value)
         }
     }
 

@@ -1,6 +1,13 @@
 import Foundation
 
-public enum FirmwareChargeKey: Sendable { case activation, upper, lower }
+public enum FirmwareChargeKey: Sendable {
+    case activation, upper, lower
+
+    func numericValue(_ data: Data) throws -> UInt32 {
+        guard data.count == (self == .activation ? 1 : 4) else { throw FirmwareChargeError.invalidData }
+        return data.enumerated().reduce(UInt32(0)) { $0 | (UInt32($1.element) << ($1.offset * 8)) }
+    }
+}
 
 public struct FirmwareChargeLimit: Equatable, Sendable {
     public let active: Bool

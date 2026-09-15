@@ -1,6 +1,9 @@
 import Foundation
 
 nonisolated enum BatteryReading {
+    static func signedAmperage(_ value: NSNumber) -> Double {
+        Double(value.int64Value) / 1000
+    }
     static func reportedHealth(from data: Data) -> Int? {
         guard let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = document["SPPowerDataType"] as? [[String: Any]] else { return nil }
@@ -44,5 +47,17 @@ nonisolated struct ChargingTransitionTracker {
         previous = isCharging
         guard notificationsEnabled, let oldValue, oldValue != isCharging else { return nil }
         return isCharging
+    }
+}
+
+nonisolated struct PowerConnectionTracker {
+    private var previous: Bool?
+
+    mutating func update(connected: Bool, valid: Bool, enabled: Bool) -> Bool? {
+        guard valid else { return nil }
+        let old = previous
+        previous = connected
+        guard enabled, let old, old != connected else { return nil }
+        return connected
     }
 }

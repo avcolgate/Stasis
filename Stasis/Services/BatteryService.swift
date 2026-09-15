@@ -52,27 +52,29 @@ class BatteryService {
 
     func loadCapabilities() async {
         let logger = self.logger
-        guard
-            let helper = xpcManager.getHelper(errorHandler: { error in
-                logger.error(
-                    "XPC error loading capabilities: \(error.localizedDescription)")
-            })
-        else {
-            logger.warning("Helper unavailable for capability probe")
-            return
-        }
-
         let capabilities: DeviceCapabilities = await withCheckedContinuation { continuation in
+            let request = CapabilityRequest(continuation, fallback: deviceCapabilities)
+            guard let helper = xpcManager.getHelper(errorHandler: { error in
+                logger.error("XPC error loading capabilities: \(error.localizedDescription)")
+                Task { @MainActor in request.finish(nil) }
+            }) else {
+                request.finish(nil)
+                return
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                request.finish(nil)
+            }
             helper.getCapabilities { chargingControl, adapterControl, hasMagSafe, magsafeLEDControl, firmwareChargeControl in
-                continuation.resume(
-                    returning: DeviceCapabilities(
+                Task { @MainActor in
+                    request.finish(DeviceCapabilities(
                         chargingControl: chargingControl,
                         adapterControl: adapterControl,
                         hasMagSafe: hasMagSafe,
                         magsafeLEDControl: magsafeLEDControl,
                         firmwareChargeControl: firmwareChargeControl
-                    )
-                )
+                    ))
+                }
             }
         }
 
@@ -190,9 +192,11 @@ class BatteryService {
         }
 
         var updatedBattery = metrics
-        updatedBattery.batteryVoltage = batteryReading.batteryVoltage
-        updatedBattery.batteryCurrent = batteryReading.batteryCurrent
-        updatedBattery.batteryPower = batteryReading.batteryPower
+        if updatedBattery.osBatteryCurrent == nil {
+            updatedBattery.batteryVoltage = batteryReading.batteryVoltage
+            updatedBattery.batteryCurrent = batteryReading.batteryCurrent
+            updatedBattery.batteryPower = batteryReading.batteryPower
+        }
 
         var updatedAdapter = adapterMetrics
         updatedAdapter.adapterVoltage = adapterReading.adapterVoltage
@@ -213,9 +217,11 @@ class BatteryService {
         ChargingNotificationService.shared.observe(newBatteryMetrics)
 
         var updatedBattery = newBatteryMetrics
-        updatedBattery.batteryVoltage = metrics.batteryVoltage
-        updatedBattery.batteryCurrent = metrics.batteryCurrent
-        updatedBattery.batteryPower = metrics.batteryPower
+        if updatedBattery.osBatteryCurrent == nil {
+            updatedBattery.batteryVoltage = metrics.batteryVoltage
+            updatedBattery.batteryCurrent = metrics.batteryCurrent
+            updatedBattery.batteryPower = metrics.batteryPower
+        }
 
         if updatedBattery != metrics {
             metrics = updatedBattery
@@ -318,5 +324,19 @@ class BatteryService {
         delayedPollTask?.cancel()
         delayedPollTask = nil
         xpcManager.disconnect()
+    }
+}
+
+@MainActor
+private final class CapabilityRequest {
+    private var continuation: CheckedContinuation<DeviceCapabilities, Never>?
+    private let fallback: DeviceCapabilities
+    init(_ continuation: CheckedContinuation<DeviceCapabilities, Never>, fallback: DeviceCapabilities) {
+        self.continuation = continuation
+        self.fallback = fallback
+    }
+    func finish(_ value: DeviceCapabilities?) {
+        continuation?.resume(returning: value ?? fallback)
+        continuation = nil
     }
 }

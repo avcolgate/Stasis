@@ -46,7 +46,9 @@ class MenuBuilder {
         if viewModel.manageChargingEnabled && viewModel.adapterConnected {
             menu.addItem(NSMenuItem.separator())
             menu.addItem(createMenuItem(view: ChargeLimitOverrideToggleView(viewModel: viewModel)))
-            menu.addItem(createMenuItem(view: ForceDischargeToggleView(viewModel: viewModel)))
+            if viewModel.canForceDischarge {
+                menu.addItem(createMenuItem(view: ForceDischargeToggleView(viewModel: viewModel)))
+            }
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -251,6 +253,9 @@ struct ChargeLimitOverrideToggleView: View {
         HStack {
             Text("Charge Limit Override")
             Spacer(minLength: 20)
+            Text(viewModel.chargeLimitOverrideActive ? "On · 100%" : "Off")
+                .foregroundStyle(viewModel.chargeLimitOverrideActive ? Color.green : Color.secondary)
+                .fontWeight(.semibold)
             Toggle(
                 "Charge Limit Override",
                 isOn: Binding(
@@ -260,6 +265,7 @@ struct ChargeLimitOverrideToggleView: View {
             )
             .labelsHidden()
             .toggleStyle(.switch)
+            .tint(.green)
             .controlSize(.mini)
             .disabled(viewModel.forceDischargeActive)
         }

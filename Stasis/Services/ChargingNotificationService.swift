@@ -7,6 +7,7 @@ import os.log
 final class ChargingNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ChargingNotificationService()
     private var tracker = ChargingTransitionTracker()
+    private var connectionTracker = PowerConnectionTracker()
     private let logger = Logger(subsystem: "com.srimanachanta.stasis", category: "Notifications")
 
     private override init() {
@@ -25,12 +26,24 @@ final class ChargingNotificationService: NSObject, UNUserNotificationCenterDeleg
 
     func observe(_ metrics: BatteryMetrics) {
         let enabled = !Defaults[.disableNotifications] && Defaults[.showChargingStatusChangedNotification]
-        guard let charging = tracker.update(isCharging: metrics.isCharging, valid: metrics.hasPowerSourceData,
-                                            notificationsEnabled: enabled) else { return }
-        let title = charging ? String(localized: "Charging Resumed") : String(localized: "Charging Paused")
-        let body = charging
+        let connection = connectionTracker.update(connected: metrics.externalConnected,
+            valid: metrics.hasPowerSourceData, enabled: enabled)
+        let charging = tracker.update(isCharging: metrics.isCharging, valid: metrics.hasPowerSourceData,
+                                      notificationsEnabled: enabled)
+        guard connection != nil || charging != nil else { return }
+        let title: String
+        let body: String
+        if let connection {
+            title = connection ? "Power Adapter Connected" : "Power Adapter Disconnected"
+            body = connection
+                ? "Power adapter connected at \(metrics.batteryPercentage)%."
+                : "Running on battery at \(metrics.batteryPercentage)%."
+        } else {
+            title = charging == true ? String(localized: "Charging Resumed") : String(localized: "Charging Paused")
+            body = charging == true
             ? "Battery is charging at \(metrics.batteryPercentage)%."
             : "Battery stopped charging at \(metrics.batteryPercentage)%."
+        }
         Task {
             do { try await send(title: title, body: body) }
             catch { logger.error("Charging notification failed: \(error.localizedDescription, privacy: .public)") }

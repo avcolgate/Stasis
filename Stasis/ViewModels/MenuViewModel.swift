@@ -32,6 +32,7 @@ class MenuViewModel {
 
     var chargeLimitOverrideActive: Bool { chargeManager.chargeLimitOverrideActive }
     var forceDischargeActive: Bool { chargeManager.forceDischargeActive }
+    var canForceDischarge: Bool { chargeManager.canForceDischarge }
     var manageChargingEnabled: Bool { Defaults[.manageCharging] }
     var adapterConnected: Bool = false
 
@@ -113,7 +114,7 @@ class MenuViewModel {
         displayPercentage = percentage
         batteryPercentageText = "\(percentage)%"
 
-        let derivedPowerSource = derivePowerSource(battery: metrics, adapter: adapter)
+        let derivedPowerSource = PowerSource.current(battery: metrics, adapter: adapter)
 
         switch derivedPowerSource {
         case .battery:
@@ -139,7 +140,12 @@ class MenuViewModel {
         switch chargingMode {
         case .charging: batteryModeText = "Charging"
         case .pluggedIn: batteryModeText = "Plugged In (Not Charging)"
-        case .discharging: batteryModeText = "Discharging"
+        case .discharging:
+            let watts = abs(metrics.batteryPower).formatted(.number.precision(.fractionLength(1)))
+            batteryModeText = "Discharging · \(watts) W"
+            if metrics.externalConnected && formatted.isEmpty {
+                timeRemainingText = "Unavailable from macOS"
+            }
         }
 
         batteryTemperatureText =
@@ -163,16 +169,6 @@ class MenuViewModel {
 
         cycleCountText = "\(metrics.cycleCount)"
         batteryHealthText = metrics.batteryHealth.map { "\(metrics.batteryHealthIsEstimated ? "~" : "")\($0)%" } ?? "Unknown"
-    }
-
-    private func derivePowerSource(battery: BatteryMetrics, adapter: AdapterMetrics) -> PowerSource {
-        guard battery.externalConnected else { return .battery }
-
-        if adapter.adapterPower == 0 || battery.batteryPower >= 0 {
-            return .acAdapter
-        } else {
-            return .both
-        }
     }
 
     private func updateUptimeText() {
