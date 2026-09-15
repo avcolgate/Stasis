@@ -183,6 +183,7 @@ class BatteryService {
     }
 
     private func pollSMCOnce() async {
+        ioKitService.refreshMetrics()
         async let batteryData = fetchSMCBatteryData()
         async let adapterData = fetchSMCAdapterData()
 

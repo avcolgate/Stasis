@@ -9,6 +9,8 @@ struct RegressionTests {
             if !condition { failures += 1 }
         }
         check(BatteryMetrics().batteryHealth == nil, "missing health is unknown")
+        check(BatteryReading.fullChargeCapacityMAh(from: ["BatteryData": ["AppleRawMaxCapacity": NSNumber(value: 4708)]]) == 4708, "ETA capacity supports nested native capacity")
+        check(BatteryReading.fullChargeCapacityMAh(from: ["MaxCapacity": 100]) == nil, "ETA never treats normalized percentage as mAh")
         let modern: [String: Any] = ["MaxCapacity": 100, "BatteryData": ["DesignCapacity": 6075, "FullChargeCapacity": 4736, "RemainingCapacity": 3613]]
         check(BatteryReading.estimatedHealth(from: modern) == 77, "nested macOS 27 capacity fields, not normalized MaxCapacity")
         check(BatteryReading.capacities(from: modern).current == 3613, "nested raw remaining capacity")

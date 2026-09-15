@@ -9,6 +9,8 @@ struct BatteryMetrics: Codable, Equatable {
     var batteryVoltage: Double = 0
     var batteryCurrent: Double = 0
     var osBatteryCurrent: Double?
+    var fullChargeCapacityMAh: Double?
+    var powerSampleTime: Double?
     var batteryPower: Double = 0
     var batteryTemperature: Double = 0
 

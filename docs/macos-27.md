@@ -9,7 +9,7 @@ This branch addresses battery reporting and menu-bar behavior observed on macOS 
 - Adapter connection changes also generate notifications, even when charging remains paused at the native 80% limit. A connection change takes precedence when connection and charging change in the same reading.
 - A test-notification button reports permission/delivery errors. Foreground presentation requests a banner, Notification Center entry, and sound. macOS Focus and screen-sharing settings can still suppress presentation.
 - The status-bar charging/plug icon follows live IOKit connection and charging state. It no longer depends on wattage, which is polled only while the menu is open. Opening the menu also no longer overwrites charging state with an SMC power estimate.
-- Live signed IOKit current distinguishes discharge while AC is physically attached. Battery voltage/current/power prefer OS readings when present; stale SMC wattage cannot change an idle OS state. With zero adapter input, the diagram uses battery-to-Mac flow. Discharge mode includes watts; no custom time-to-limit estimate is fabricated.
+- Live signed IOKit current distinguishes discharge while AC is physically attached. Battery voltage/current/power prefer OS readings when present; stale SMC wattage cannot change an idle OS state. With zero adapter input, the diagram uses battery-to-Mac flow. Discharge mode includes watts.
 - Charge Limit Override has explicit On/Off text as well as green tint.
 
 ## Charging control: experimental
@@ -45,6 +45,18 @@ Installed-app test: enabling Manage charging exposed the native 80% picker. The 
 The tester then unplugged/reconnected and confirmed the override switched off. The system target read back as 80%; screenshots showed connected/charging-paused notifications at 86%. OS signed current confirmed discharge while AC remained attached. Normal quit retained 80% and removed the recovery journal; the final build reopened successfully.
 
 ## Validation
+
+### Time to selected target
+
+When charge management is enabled, Time Remaining estimates minutes to the configured percentage (100% during override). It uses the OS display-percentage gap, full-charge capacity in mAh, and a time-weighted moving average of measured current with a 60-second time constant. This keeps the percentage display unchanged and avoids mixing raw and displayed state-of-charge scales. Estimates are prefixed with `≈`; they are not macOS-provided predictions and cannot anticipate future load or charge taper.
+
+Exception: while charging toward 100%, a valid OS time-to-full estimate takes precedence because it can account for charge taper. The current-rate estimate is the fallback until macOS supplies one. A live test reproduced this distinction: the raw-current projection was about 19 minutes, while macOS subsequently supplied about 59 minutes to full.
+
+At least 15 seconds of distinct readings are required. Target, adapter, and current-direction changes reset history. Missing/nonfinite capacity or current, readings older than two minutes, and estimates beyond 48 hours show `Estimating…`. Idle or away-from-target movement shows `Not approaching target`. Only a plugged-in, noncharging, near-zero-current battery at the displayed target shows `∞ · Holding at …%`. Opening the menu refreshes OS readings alongside the existing polling. With management disabled, the original OS time-remaining display is retained.
+
+Automated cases cover both charging/discharging ETAs, smoothing, duplicate snapshots, override reset, holding/unplugging, stale/malformed data, and capacity-field selection. A signed Debug build and installed-app signature verification passed for this change.
+
+Live display validation: the tester confirmed `∞ · Holding at 80%`, then confirmed approximately 26 minutes to 100% while the diagram showed 25 W into the battery and 35 W into the Mac from 60 W adapter input. The native transition and estimator warm-up are not instantaneous. The subsequent OS-time-to-full preference has a regression test; the installed refinement restored the configured 80% limit during restart.
 
 Run the production-model regression checks with:
 

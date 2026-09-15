@@ -9,6 +9,7 @@ class MenuViewModel {
     private let batteryService: BatteryService
     private let chargeManager: ChargeManager
     private let bootTimestamp: Date?
+    private var targetTimeEstimator = TargetTimeEstimator()
 
     var batteryPercentageText: String = "0%"
     var powerSourceText: String = "Battery"
@@ -62,6 +63,7 @@ class MenuViewModel {
                     withObservationTracking {
                         _ = self.batteryService.metrics
                         _ = self.batteryService.adapterMetrics
+                        _ = self.chargeManager.chargeLimitOverrideActive
                     } onChange: {
                         Task { @MainActor in
                             continuation.resume()
@@ -74,7 +76,7 @@ class MenuViewModel {
 
     private func startObservingSettings() {
         settingsObservation = Task { [weak self] in
-            for await _ in Defaults.updates([.useHardwarePercentage], initial: false) {
+            for await _ in Defaults.updates([.useHardwarePercentage, .chargeLimit, .manageCharging], initial: false) {
                 guard let self else { return }
                 self.updateFormattedValues(
                     from: self.batteryService.metrics,
@@ -166,6 +168,15 @@ class MenuViewModel {
         powerSource = derivedPowerSource
         isCharging = metrics.isCharging
         adapterConnected = adapter.adapterConnected
+
+        if Defaults[.manageCharging] {
+            let target = chargeManager.chargeLimitOverrideActive ? 100 : Defaults[.chargeLimit]
+            timeRemainingText = targetTimeEstimator.update(
+                metrics, target: target, now: ProcessInfo.processInfo.systemUptime
+            ).text
+        } else {
+            targetTimeEstimator.reset()
+        }
 
         cycleCountText = "\(metrics.cycleCount)"
         batteryHealthText = metrics.batteryHealth.map { "\(metrics.batteryHealthIsEstimated ? "~" : "")\($0)%" } ?? "Unknown"

@@ -107,6 +107,11 @@ class IOKitService {
         continuation = nil
     }
 
+    func refreshMetrics() {
+        guard batteryService != 0 else { return }
+        emitMetrics()
+    }
+
     private func emitMetrics() {
         logger.debug("IOKit notification triggered")
 
@@ -133,12 +138,14 @@ class IOKitService {
             getPropertyValue(batteryService, key: "ExternalConnected") ?? false
 
         let properties = batteryProperties()
+        batteryMetrics.fullChargeCapacityMAh = BatteryReading.fullChargeCapacityMAh(from: properties)
         if let current = (properties["InstantAmperage"] ?? properties["Amperage"]) as? NSNumber,
            let voltage = properties["Voltage"] as? NSNumber {
             batteryMetrics.osBatteryCurrent = BatteryReading.signedAmperage(current)
             batteryMetrics.batteryCurrent = BatteryReading.signedAmperage(current)
             batteryMetrics.batteryVoltage = voltage.doubleValue / 1000
             batteryMetrics.batteryPower = batteryMetrics.batteryCurrent * batteryMetrics.batteryVoltage
+            batteryMetrics.powerSampleTime = ProcessInfo.processInfo.systemUptime
         }
 
         adapterMetrics.adapterConnected = isAdapterConnected()

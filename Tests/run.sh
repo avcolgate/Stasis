@@ -9,3 +9,5 @@ swiftc SMCPower/FirmwareChargeLimit.swift Tests/FirmwareTests.swift -o "$build_d
 "$build_directory/firmware"
 swiftc Stasis/Services/NativeChargeSession.swift Tests/NativeChargeTests.swift -o "$build_directory/native"
 "$build_directory/native"
+swiftc Stasis/Models/BatteryMetrics.swift Stasis/Models/TargetTimeEstimator.swift Tests/TargetTimeTests.swift -o "$build_directory/target-time"
+"$build_directory/target-time"

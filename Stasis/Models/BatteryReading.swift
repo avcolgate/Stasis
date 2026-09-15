@@ -1,6 +1,13 @@
 import Foundation
 
 nonisolated enum BatteryReading {
+    static func fullChargeCapacityMAh(from properties: [String: Any]) -> Double? {
+        let nested = properties["BatteryData"] as? [String: Any] ?? [:]
+        return [properties["AppleRawMaxCapacity"], nested["AppleRawMaxCapacity"], nested["FullChargeCapacity"]]
+            .compactMap { ($0 as? NSNumber)?.doubleValue }
+            .first { $0.isFinite && $0 > 100 && $0 < 100_000 }
+    }
+
     static func signedAmperage(_ value: NSNumber) -> Double {
         Double(value.int64Value) / 1000
     }
