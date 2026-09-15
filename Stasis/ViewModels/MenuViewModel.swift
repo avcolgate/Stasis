@@ -19,7 +19,7 @@ class MenuViewModel {
     var externalInputText: String = "0V @ 0A"
     var internalInputText: String = "0V @ 0A"
     var cycleCountText: String = "0"
-    var batteryHealthText: String = "100%"
+    var batteryHealthText: String = "Unknown"
 
     var displayPercentage: Int = 0
     var chargingMode: ChargingMode = .discharging
@@ -135,17 +135,11 @@ class MenuViewModel {
 
         updateUptimeText()
 
-        if derivedPowerSource == .acAdapter {
-            if metrics.isCharging {
-                chargingMode = .charging
-                batteryModeText = "Charging"
-            } else {
-                chargingMode = .pluggedIn
-                batteryModeText = "Plugged In (Not Charging)"
-            }
-        } else {
-            chargingMode = .discharging
-            batteryModeText = "Discharging"
+        chargingMode = ChargingMode.current(battery: metrics)
+        switch chargingMode {
+        case .charging: batteryModeText = "Charging"
+        case .pluggedIn: batteryModeText = "Plugged In (Not Charging)"
+        case .discharging: batteryModeText = "Discharging"
         }
 
         batteryTemperatureText =
@@ -168,15 +162,13 @@ class MenuViewModel {
         adapterConnected = adapter.adapterConnected
 
         cycleCountText = "\(metrics.cycleCount)"
-        batteryHealthText = "\(metrics.batteryHealth)%"
+        batteryHealthText = metrics.batteryHealth.map { "\(metrics.batteryHealthIsEstimated ? "~" : "")\($0)%" } ?? "Unknown"
     }
 
     private func derivePowerSource(battery: BatteryMetrics, adapter: AdapterMetrics) -> PowerSource {
-        guard adapter.adapterConnected else { return .battery }
+        guard battery.externalConnected else { return .battery }
 
-        if adapter.adapterPower == 0 {
-            return .battery
-        } else if battery.batteryPower >= 0 {
+        if adapter.adapterPower == 0 || battery.batteryPower >= 0 {
             return .acAdapter
         } else {
             return .both

@@ -24,6 +24,8 @@ class ChargingHelperManager {
     )
 
     private(set) var helperStatus: ChargingHelperStatus
+    private(set) var firmwareChargeControl = false
+    private(set) var firmwareProbeError: String?
 
     var isInstalled: Bool {
         service.status == .enabled
@@ -60,6 +62,7 @@ class ChargingHelperManager {
         disconnect()
         try service.unregister()
         helperStatus = .notInstalled
+        firmwareChargeControl = false
     }
 
     func refreshStatus() {
@@ -68,6 +71,28 @@ class ChargingHelperManager {
         case .requiresApproval: helperStatus = .requiresApproval
         default: helperStatus = .notInstalled
         }
+    }
+
+    func refreshFirmwareSupport() async {
+        guard isInstalled else { return }
+        let result: (Bool, String?) = await withCheckedContinuation { continuation in
+            let request = FirmwareCapabilityRequest(continuation)
+            guard let helper = getHelper(errorHandler: { error in
+                Task { @MainActor in request.finish(false, error.localizedDescription) }
+            }) else {
+                request.finish(false, "Charging helper is unavailable.")
+                return
+            }
+            helper.getFirmwareChargeControl { supported, message in
+                Task { @MainActor in request.finish(supported, message) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                request.finish(false, "Charging helper did not respond. Check Login Items in System Settings.")
+            }
+        }
+        firmwareChargeControl = result.0
+        firmwareProbeError = result.1
     }
 
     func getHelper(errorHandler: @escaping @Sendable (Error) -> Void) -> ChargingHelperProtocol? {
@@ -111,5 +136,15 @@ class ChargingHelperManager {
     func disconnect() {
         connection?.invalidate()
         connection = nil
+    }
+}
+
+@MainActor
+private final class FirmwareCapabilityRequest {
+    private var continuation: CheckedContinuation<(Bool, String?), Never>?
+    init(_ continuation: CheckedContinuation<(Bool, String?), Never>) { self.continuation = continuation }
+    func finish(_ supported: Bool, _ error: String?) {
+        continuation?.resume(returning: (supported, error))
+        continuation = nil
     }
 }

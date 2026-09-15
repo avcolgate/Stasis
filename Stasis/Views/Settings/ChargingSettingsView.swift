@@ -14,6 +14,7 @@ struct ChargingSettingsView: View {
     @Default(.heatProtectionLimit) var heatProtectionLimit
     @Default(.manageMagSafeLED) var manageMagSafeLED
     @Default(.heatProtectionMagSafeLEDState) var heatProtectionMagSafeLEDState
+    @Default(.chargingControlError) var chargingControlError
     @State private var helperManager = ChargingHelperManager.shared
     @State private var installError: String?
 
@@ -40,8 +41,12 @@ struct ChargingSettingsView: View {
         capabilities.hasMagSafe
     }
 
+    private var hasFirmwareControl: Bool {
+        capabilities.firmwareChargeControl || helperManager.firmwareChargeControl
+    }
+
     private var hasAnyControl: Bool {
-        hasChargingControl || hasAdapterControl
+        hasChargingControl || hasFirmwareControl
     }
 
     private var sailingResumePercentage: Int {
@@ -61,6 +66,27 @@ struct ChargingSettingsView: View {
                     )
                 )
                 .disabled(!hasAnyControl || helperManager.helperStatus == .requiresApproval)
+
+                if helperManager.helperStatus == .installed && !manageCharging {
+                    Button("Remove Charging Helper") {
+                        do { try helperManager.uninstall() }
+                        catch { installError = error.localizedDescription }
+                    }
+                }
+
+                if !hasAnyControl {
+                    Button("Check Firmware Support") {
+                        Task {
+                            do {
+                                try helperManager.install()
+                                await helperManager.refreshFirmwareSupport()
+                                installError = helperManager.firmwareProbeError
+                            } catch { installError = error.localizedDescription }
+                        }
+                    }
+                    Text("macOS 27 firmware controls require the charging helper. Checking support does not change the charge limit.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
 
                 if helperManager.helperStatus == .requiresApproval {
                     LabeledContent {
@@ -101,11 +127,25 @@ struct ChargingSettingsView: View {
                 }
             } footer: {
                 if !hasAnyControl {
-                    Text("Charge management is not supported on this device.")
+                    Text("Stasis cannot pause charging while keeping adapter power on this Mac. Use the charge limit in System Settings → Battery. Charging notifications still work.")
                 }
             }
 
-            if manageCharging {
+            if manageCharging && hasFirmwareControl {
+                Section("Firmware Charge Control") {
+                    Toggle("Enable sailing mode", isOn: $sailingMode)
+                    if sailingMode {
+                        Stepper("Resume \(sailingModeLimit)% below limit", value: $sailingModeLimit, in: 1...20)
+                    }
+                    Text("The firmware holds the charge limit while keeping adapter power connected. Automatic discharge and heat protection are unavailable in this mode.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !chargingControlError.isEmpty {
+                        Text(chargingControlError).foregroundStyle(.red)
+                    }
+                }
+            }
+
+            if manageCharging && !hasFirmwareControl {
                 Section {
                     Toggle("Automatic discharge", isOn: $automaticDischarge)
                         .disabled(!hasAdapterControl)
@@ -253,7 +293,7 @@ struct ChargingSettingsView: View {
         .animation(.default, value: manageMagSafeLED)
         .animation(.default, value: helperManager.helperStatus)
         .alert(
-            "Failed to install charging helper",
+            "Charging Helper",
             isPresented: Binding(
                 get: { installError != nil },
                 set: { if !$0 { installError = nil } }
@@ -287,7 +327,7 @@ struct ChargingSettingsView: View {
     private func checkApprovalStatus() {
         helperManager.refreshStatus()
         if helperManager.helperStatus == .installed {
-            manageCharging = true
+            Task { await helperManager.refreshFirmwareSupport() }
         }
     }
 }

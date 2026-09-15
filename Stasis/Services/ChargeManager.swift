@@ -2,7 +2,6 @@ import Defaults
 import Foundation
 import IOKit.pwr_mgt
 import Observation
-import UserNotifications
 import os.log
 import smc_power
 
@@ -16,8 +15,9 @@ class ChargeManager {
 
     private var lastAdapterConnected: Bool?
     private var lastManageChargingEnabled: Bool?
+    private var firmwareLimitTask: Task<Void, Never>?
+    private var appliedFirmwareLimit: FirmwareChargeLimit?
     private var hasReachedChargeLimit = false
-    private var lastNotifiedChargingState: Bool?
 
     private(set) var chargeLimitOverrideActive = false
     private(set) var forceDischargeActive = false
@@ -76,11 +76,21 @@ class ChargeManager {
         if controlState.adapterConnected != lastAdapterConnected {
             logger.info("Adapter connection changed: \(controlState.adapterConnected)")
             lastAdapterConnected = controlState.adapterConnected
+            if !controlState.adapterConnected {
+                chargeLimitOverrideActive = false
+                forceDischargeActive = false
+            }
             clearCachedState()
             stateWasCleared = true
         }
 
-        guard Defaults[.manageCharging], controlState.adapterConnected else {
+        if batteryService.deviceCapabilities.firmwareChargeControl || ChargingHelperManager.shared.firmwareChargeControl {
+            evaluateFirmwareLimit(controlState: controlState)
+            return
+        }
+
+        guard Defaults[.manageCharging], batteryService.deviceCapabilities.chargingControl,
+              controlState.adapterConnected else {
             if chargeLimitOverrideActive, !controlState.adapterConnected {
                 chargeLimitOverrideActive = false
             }
@@ -110,20 +120,17 @@ class ChargeManager {
         var desiredCharging: Bool?
         var desiredAdapter: Bool?
         var desiredLED: MagSafeLEDState?
-        var chargingStateReason: String?
 
         if batteryPercentage > chargeLimit {
             hasReachedChargeLimit = true
             desiredCharging = false
             desiredAdapter = Defaults[.automaticDischarge] ? false : true
             desiredLED = Defaults[.manageMagSafeLED] ? .green : nil
-            chargingStateReason = "Battery is above the charge limit of \(chargeLimit)%"
         } else if batteryPercentage == chargeLimit {
             hasReachedChargeLimit = true
             desiredCharging = false
             desiredAdapter = true
             desiredLED = Defaults[.manageMagSafeLED] ? .green : nil
-            chargingStateReason = "Battery has reached the charge limit of \(chargeLimit)%"
         } else if Defaults[.sailingMode] {
             let sailingThreshold = chargeLimit - Defaults[.sailingModeLimit]
             let inSailingRange = batteryPercentage >= sailingThreshold
@@ -132,35 +139,22 @@ class ChargeManager {
                 desiredCharging = false
                 desiredAdapter = true
                 desiredLED = Defaults[.manageMagSafeLED] ? .green : nil
-                chargingStateReason = "Sailing mode is maintaining charge below \(chargeLimit)%"
             } else {
-                let droppedOutOfSailingRange = !inSailingRange && hasReachedChargeLimit
                 hasReachedChargeLimit = false
                 desiredCharging = true
                 desiredAdapter = true
                 desiredLED = Defaults[.manageMagSafeLED] ? .orange : nil
-                if inSailingRange {
-                    chargingStateReason = "Charging to reach charge limit of \(chargeLimit)%"
-                } else if droppedOutOfSailingRange {
-                    chargingStateReason =
-                        "Battery dropped below sailing threshold of \(sailingThreshold)%"
-                } else {
-                    chargingStateReason = "Battery is below the charge limit of \(chargeLimit)%"
-                }
             }
         } else {
             desiredCharging = true
             desiredAdapter = true
             desiredLED = Defaults[.manageMagSafeLED] ? .orange : nil
-            chargingStateReason = "Battery is below the charge limit of \(chargeLimit)%"
         }
 
         if Defaults[.enableHeatProtectionMode]
             && controlState.batteryTemperature > Double(Defaults[.heatProtectionLimit])
         {
             desiredCharging = false
-            chargingStateReason =
-                "Battery temperature exceeds \(Defaults[.heatProtectionLimit])°C"
             if Defaults[.manageMagSafeLED] {
                 desiredLED = Defaults[.heatProtectionMagSafeLEDState]
             }
@@ -175,9 +169,6 @@ class ChargeManager {
 
         if let desiredCharging, capabilities.chargingControl {
             setCharging(enabled: desiredCharging)
-            sendChargingStateNotification(
-                charging: desiredCharging, reason: chargingStateReason
-            )
         }
         if let desiredAdapter, capabilities.adapterControl {
             setAdapter(enabled: desiredAdapter)
@@ -191,12 +182,40 @@ class ChargeManager {
         updateSleepAssertion(shouldPreventSleep: shouldPreventSleep)
     }
 
+    private func evaluateFirmwareLimit(controlState: BatteryControlState) {
+        guard Defaults[.manageCharging] else {
+            appliedFirmwareLimit = nil
+            return
+        }
+        guard controlState.adapterConnected, firmwareLimitTask == nil else { return }
+        let upper = chargeLimitOverrideActive ? 100 : Defaults[.chargeLimit]
+        let gap = Defaults[.sailingMode] ? max(1, Defaults[.sailingModeLimit]) : 1
+        do {
+            let target = try FirmwareChargeLimit(lower: max(0, upper - gap), upper: upper)
+            guard target != appliedFirmwareLimit else { return }
+            firmwareLimitTask = Task {
+                defer { firmwareLimitTask = nil }
+                do {
+                    try await batteryService.setFirmwareChargeLimit(lower: target.lower, upper: target.upper)
+                    appliedFirmwareLimit = target
+                    Defaults[.chargingControlError] = ""
+                    logger.info("Firmware charge thresholds applied: \(target.lower)...\(target.upper)%")
+                } catch {
+                    Defaults[.chargingControlError] = error.localizedDescription
+                    logger.error("Firmware charge control failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        } catch {
+            Defaults[.chargingControlError] = error.localizedDescription
+        }
+    }
+
     private func clearCachedState() {
-        lastNotifiedChargingState = nil
         hasReachedChargeLimit = false
     }
 
     private func resetToDefaults() {
+        guard lastManageChargingEnabled == true else { return }
         hasReachedChargeLimit = false
         lastManageChargingEnabled = false
         updateSleepAssertion(shouldPreventSleep: false)
@@ -270,40 +289,13 @@ class ChargeManager {
         }
     }
 
-    private func sendChargingStateNotification(charging: Bool, reason: String?) {
-        guard charging != lastNotifiedChargingState else { return }
-        lastNotifiedChargingState = charging
-
-        guard !Defaults[.disableNotifications],
-            Defaults[.showChargingStatusChangedNotification]
-        else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = charging ? String(localized: "Charging Resumed") : String(localized: "Charging Paused")
-        if let reason {
-            content.body = reason
-        }
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "chargingStateChanged",
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request) { [logger] error in
-            if let error {
-                logger.error("Failed to deliver notification: \(error)")
-            }
-        }
-    }
-
     func toggleChargeLimitOverride() {
         chargeLimitOverrideActive.toggle()
         evaluate(controlState: batteryService.controlState)
     }
 
     func toggleForceDischarge() {
+        guard !batteryService.deviceCapabilities.firmwareChargeControl, !ChargingHelperManager.shared.firmwareChargeControl else { return }
         forceDischargeActive.toggle()
         evaluate(controlState: batteryService.controlState)
     }

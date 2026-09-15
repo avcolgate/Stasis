@@ -39,6 +39,8 @@ extension Defaults.Keys {
     static let showExternalPower = Key<Bool>("showExternalPower", default: true)
     static let showPowerDistribution = Key<Bool>("showPowerDistribution", default: false)
 
+    static let chargingControlError = Key<String>("chargingControlError", default: "")
+
     // Charging
     static let manageCharging = Key<Bool>("manageCharging", default: false)
     static let chargeLimit = Key<Int>("chargeLimit", default: 80)

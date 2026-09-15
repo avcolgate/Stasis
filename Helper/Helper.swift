@@ -46,7 +46,7 @@ final class Helper: NSObject, HelperProtocol {
         }
     }
 
-    func getCapabilities(reply: @escaping @Sendable (Bool, Bool, Bool, Bool) -> Void) {
+    func getCapabilities(reply: @escaping @Sendable (Bool, Bool, Bool, Bool, Bool) -> Void) {
         do {
             let battery = try SMCBattery.probe()
             let adapter = try SMCAdapter.probe()
@@ -61,11 +61,12 @@ final class Helper: NSObject, HelperProtocol {
                 capabilities.chargingControl,
                 capabilities.adapterControl,
                 capabilities.hasMagSafe,
-                capabilities.magsafeLEDControl
+                capabilities.magsafeLEDControl,
+                capabilities.firmwareChargeControl
             )
         } catch {
             logger.error("Failed to probe capabilities: \(error.localizedDescription)")
-            reply(false, false, false, false)
+            reply(false, false, false, false, false)
         }
     }
 }

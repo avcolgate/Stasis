@@ -63,13 +63,14 @@ class BatteryService {
         }
 
         let capabilities: DeviceCapabilities = await withCheckedContinuation { continuation in
-            helper.getCapabilities { chargingControl, adapterControl, hasMagSafe, magsafeLEDControl in
+            helper.getCapabilities { chargingControl, adapterControl, hasMagSafe, magsafeLEDControl, firmwareChargeControl in
                 continuation.resume(
                     returning: DeviceCapabilities(
                         chargingControl: chargingControl,
                         adapterControl: adapterControl,
                         hasMagSafe: hasMagSafe,
-                        magsafeLEDControl: magsafeLEDControl
+                        magsafeLEDControl: magsafeLEDControl,
+                        firmwareChargeControl: firmwareChargeControl
                     )
                 )
             }
@@ -198,12 +199,6 @@ class BatteryService {
         updatedAdapter.adapterCurrent = adapterReading.adapterCurrent
         updatedAdapter.adapterPower = adapterReading.adapterPower
 
-        // SMC reports faster than IOKit can update, so refine isCharging
-        // using the actual power flow direction.
-        if updatedAdapter.adapterConnected {
-            updatedBattery.isCharging = batteryReading.batteryPower > 0
-        }
-
         if updatedBattery != metrics {
             metrics = updatedBattery
         }
@@ -215,6 +210,7 @@ class BatteryService {
 
     private func handleIOKitUpdate(_ newBatteryMetrics: BatteryMetrics, adapterUpdate: AdapterMetrics) {
         logger.debug("Received IOKit update")
+        ChargingNotificationService.shared.observe(newBatteryMetrics)
 
         var updatedBattery = newBatteryMetrics
         updatedBattery.batteryVoltage = metrics.batteryVoltage
@@ -246,6 +242,16 @@ class BatteryService {
         )
         if newState != controlState {
             controlState = newState
+        }
+    }
+
+    func setFirmwareChargeLimit(lower: Int, upper: Int) async throws {
+        let helper = try getChargingHelper()
+        try await withCheckedThrowingContinuation { continuation in
+            helper.setFirmwareChargeLimit(lower: lower, upper: upper) { success, message in
+                if success { continuation.resume() }
+                else { continuation.resume(throwing: XPCError.commandFailed(message ?? "Firmware limit failed")) }
+            }
         }
     }
 

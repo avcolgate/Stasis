@@ -7,6 +7,7 @@ private enum Constants {
 }
 
 final class ChargingHelper: NSObject, ChargingHelperProtocol {
+    private var originalFirmwareLimit: FirmwareChargeLimit?
     private let battery: SMCBattery
     private let adapter: SMCAdapter
     private let logger = Logger(
@@ -21,6 +22,23 @@ final class ChargingHelper: NSObject, ChargingHelperProtocol {
         logger.info(
             "Initialized (charging=\(battery.capabilities.inhibitChargeControl), discharge=\(battery.capabilities.forceDischargeControl), magSafe=\(adapter.capabilities.magSafeControl))"
         )
+    }
+
+    func getFirmwareChargeControl(reply: @escaping @Sendable (Bool, String?) -> Void) {
+        reply(battery.capabilities.firmwareChargeControl, battery.capabilities.firmwareProbeError)
+    }
+
+    func setFirmwareChargeLimit(lower: Int, upper: Int, reply: @escaping @Sendable (Bool, String?) -> Void) {
+        do {
+            let limit = try FirmwareChargeLimit(lower: lower, upper: upper)
+            if originalFirmwareLimit == nil { originalFirmwareLimit = try battery.getFirmwareChargeLimit() }
+            try battery.setFirmwareChargeLimit(limit)
+            logger.info("Firmware charge limit verified: \(lower)...\(upper)%")
+            reply(true, nil)
+        } catch {
+            logger.error("Firmware limit failed: \(error.localizedDescription, privacy: .public)")
+            reply(false, error.localizedDescription)
+        }
     }
 
     func manageBatteryCharging(enabled: Bool, reply: @escaping @Sendable (Bool, String?) -> Void) {
@@ -82,19 +100,25 @@ final class ChargingHelper: NSObject, ChargingHelperProtocol {
     }
 
     func resetToDefaults() {
-        do {
-            if battery.capabilities.inhibitChargeControl {
-                try battery.setChargingInhibited(false)
+        // Restore each control independently so a firmware failure cannot leave adapter power disabled.
+        func restore(_ control: String, action: () throws -> Void) {
+            do { try action() }
+            catch { logger.error("Failed to restore \(control, privacy: .public): \(error.localizedDescription, privacy: .public)") }
+        }
+        if let originalFirmwareLimit {
+            restore("firmware charge limit") {
+                try battery.setFirmwareChargeLimit(originalFirmwareLimit)
+                self.originalFirmwareLimit = nil
             }
-            if battery.capabilities.forceDischargeControl {
-                try battery.setForceDischarging(false)
-            }
-            if adapter.capabilities.magSafeControl {
-                try adapter.setMagSafeLEDState(.reset)
-            }
-            logger.info("SMC keys reset to defaults")
-        } catch {
-            logger.error("resetToDefaults failed: \(error.localizedDescription)")
+        }
+        if battery.capabilities.inhibitChargeControl {
+            restore("charging") { try battery.setChargingInhibited(false) }
+        }
+        if battery.capabilities.forceDischargeControl {
+            restore("adapter power") { try battery.setForceDischarging(false) }
+        }
+        if adapter.capabilities.magSafeControl {
+            restore("MagSafe LED") { try adapter.setMagSafeLEDState(.reset) }
         }
     }
 }

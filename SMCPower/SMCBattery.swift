@@ -1,5 +1,6 @@
 import Foundation
 import SMCKit
+import os.log
 
 public enum SMCBatteryError: Error, Sendable {
     case unsupportedCapability
@@ -8,6 +9,8 @@ public enum SMCBatteryError: Error, Sendable {
 public struct BatteryCapabilities: Codable, Sendable {
     public let inhibitChargeControl: Bool
     public let forceDischargeControl: Bool
+    public let firmwareChargeControl: Bool
+    public let firmwareProbeError: String?
 }
 
 /*
@@ -30,9 +33,25 @@ public struct SMCBattery: Sendable {
         let hasCH0I = try SMCKit.shared.isKeyFound("CH0I")
         let hasCHIE = try SMCKit.shared.isKeyFound("CHIE")
 
+        Logger(subsystem: "com.srimanachanta.stasis", category: "SMCProbe").info(
+            "Charge keys: CH0C=\(hasCH0C), CHTE=\(hasCHTE), CH0I=\(hasCH0I), CHIE=\(hasCHIE)"
+        )
+        let hasFirmwareControl: Bool
+        var firmwareProbeError: String?
+        do {
+            hasFirmwareControl = try SMCKit.shared.isKeyFound("bfF0")
+                && SMCKit.shared.isKeyFound("bfD0") && SMCKit.shared.isKeyFound("bfE0")
+        } catch {
+            firmwareProbeError = "macOS denied or could not complete the firmware charge-control probe: \(String(describing: error)). Keep the native charge limit enabled."
+            Logger(subsystem: "com.srimanachanta.stasis", category: "SMCProbe").error("Firmware probe failed (privileged probe may be required): \(String(reflecting: error), privacy: .public)")
+            hasFirmwareControl = false
+        }
+        Logger(subsystem: "com.srimanachanta.stasis", category: "SMCProbe").info("Firmware charge control: \(hasFirmwareControl)")
         let capabilities = BatteryCapabilities(
             inhibitChargeControl: hasCH0C || hasCHTE,
-            forceDischargeControl: hasCH0I || hasCHIE
+            forceDischargeControl: hasCH0I || hasCHIE,
+            firmwareChargeControl: hasFirmwareControl,
+            firmwareProbeError: firmwareProbeError
         )
 
         return SMCBattery(
@@ -50,6 +69,32 @@ public struct SMCBattery: Sendable {
         self.hasCHTE = hasCHTE
         self.hasCH0I = hasCH0I
         self.hasCHIE = hasCHIE
+    }
+
+    public func getFirmwareChargeLimit() throws -> FirmwareChargeLimit {
+        guard capabilities.firmwareChargeControl else { throw SMCBatteryError.unsupportedCapability }
+        return try FirmwareChargeLimit.read(using: readFirmwareKey)
+    }
+
+    public func setFirmwareChargeLimit(_ limit: FirmwareChargeLimit) throws {
+        guard capabilities.firmwareChargeControl else { throw SMCBatteryError.unsupportedCapability }
+        try limit.apply(read: readFirmwareKey, write: writeFirmwareKey)
+    }
+
+    private func readFirmwareKey(_ key: FirmwareChargeKey) throws -> Data {
+        switch key {
+        case .activation: try SMCKit.shared.readData("bfF0")
+        case .upper: try SMCKit.shared.readData("bfD0")
+        case .lower: try SMCKit.shared.readData("bfE0")
+        }
+    }
+
+    private func writeFirmwareKey(_ key: FirmwareChargeKey, data: Data) throws {
+        switch key {
+        case .activation: try SMCKit.shared.writeData("bfF0", data)
+        case .upper: try SMCKit.shared.writeData("bfD0", data)
+        case .lower: try SMCKit.shared.writeData("bfE0", data)
+        }
     }
 
     public static func getVoltage() throws -> Double {

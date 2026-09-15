@@ -33,6 +33,7 @@ public struct SMCAdapterReading: Sendable {
 }
 
 public struct DeviceCapabilities: Sendable {
+    public let firmwareChargeControl: Bool
     public let chargingControl: Bool
     public let adapterControl: Bool
     public let hasMagSafe: Bool
@@ -42,8 +43,10 @@ public struct DeviceCapabilities: Sendable {
         chargingControl: Bool,
         adapterControl: Bool,
         hasMagSafe: Bool,
-        magsafeLEDControl: Bool
+        magsafeLEDControl: Bool,
+        firmwareChargeControl: Bool = false
     ) {
+        self.firmwareChargeControl = firmwareChargeControl
         self.chargingControl = chargingControl
         self.adapterControl = adapterControl
         self.hasMagSafe = hasMagSafe
@@ -58,7 +61,8 @@ public struct DeviceCapabilities: Sendable {
             chargingControl: battery.inhibitChargeControl,
             adapterControl: battery.forceDischargeControl,
             hasMagSafe: adapter.magSafeControl,
-            magsafeLEDControl: adapter.magSafeControl
+            magsafeLEDControl: adapter.magSafeControl,
+            firmwareChargeControl: battery.firmwareChargeControl
         )
     }
 }

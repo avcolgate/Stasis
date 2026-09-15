@@ -6,5 +6,5 @@ import Foundation
     func readAdapterMetrics(
         reply: @escaping @Sendable (Double, Double, Double) -> Void)
     func getCapabilities(
-        reply: @escaping @Sendable (Bool, Bool, Bool, Bool) -> Void)
+        reply: @escaping @Sendable (Bool, Bool, Bool, Bool, Bool) -> Void)
 }

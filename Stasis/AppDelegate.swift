@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var adapterObservation: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = ChargingNotificationService.shared
         // Exit the app immediately if the device doesn't have a battery
         let batteryIOService = IOServiceGetMatchingService(
             kIOMainPortDefault,
@@ -30,13 +31,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task {
             await setupServices()
             setupMenu()
-            requestNotificationPermissions()
+            await ChargingNotificationService.shared.requestAuthorization()
         }
     }
 
     private func setupServices() async {
         batteryService = BatteryService()
         await batteryService.loadCapabilities()
+        await ChargingHelperManager.shared.refreshFirmwareSupport()
         chargeManager = ChargeManager(batteryService: batteryService)
         viewModel = MenuViewModel(
             batteryService: batteryService,
@@ -94,10 +96,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuBuilder.populateMenu(menu)
     }
 
-    private func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .sound]
-        ) { _, _ in }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settingsWindowController?.showSettings()
+        return true
     }
 
     func menuWillOpen(_ menu: NSMenu) {

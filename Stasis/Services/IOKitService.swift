@@ -9,6 +9,8 @@ class IOKitService {
     private var notificationPort: IONotificationPortRef?
     private var interestNotification: io_object_t = 0
     private var batteryService: io_service_t = 0
+    private var healthTask: Task<Void, Never>?
+    private var reportedHealth: Int?
 
     private var continuation: AsyncStream<(BatteryMetrics, AdapterMetrics)>.Continuation?
 
@@ -28,6 +30,7 @@ class IOKitService {
             }
 
             self.startNotifications()
+            self.startHealthRefresh()
         }
     }
 
@@ -85,6 +88,8 @@ class IOKitService {
     }
 
     private func stop() {
+        healthTask?.cancel()
+        healthTask = nil
         if interestNotification != 0 {
             IOObjectRelease(interestNotification)
             interestNotification = 0
@@ -113,6 +118,7 @@ class IOKitService {
         batteryMetrics.batteryPercentage = percentages.displayed
         batteryMetrics.hardwareBatteryPercentage = percentages.hardware
 
+        batteryMetrics.hasPowerSourceData = powerInfo?[kIOPSIsChargingKey] as? Bool != nil
         batteryMetrics.isCharging = powerInfo?[kIOPSIsChargingKey] as? Bool ?? false
         if batteryMetrics.isCharging {
             batteryMetrics.timeRemaining = getTimeToFull(powerInfo: powerInfo) ?? -1
@@ -120,11 +126,8 @@ class IOKitService {
             batteryMetrics.timeRemaining = getTimeRemaining(powerInfo: powerInfo) ?? -1
         }
 
-        let capacities = getBatteryCapacities()
-        batteryMetrics.batteryHealth =
-            capacities.design > 0
-            ? (capacities.max * 100) / capacities.design
-            : 100
+        batteryMetrics.batteryHealth = reportedHealth ?? BatteryReading.estimatedHealth(from: batteryProperties())
+        batteryMetrics.batteryHealthIsEstimated = reportedHealth == nil
 
         batteryMetrics.externalConnected =
             getPropertyValue(batteryService, key: "ExternalConnected") ?? false
@@ -139,7 +142,7 @@ class IOKitService {
             getPropertyValue(batteryService, key: "CycleCount") ?? 0
 
         logger.debug(
-            "IOKit metrics: battery=\(batteryMetrics.batteryPercentage)%, hardwareBattery=\(batteryMetrics.hardwareBatteryPercentage)%, health=\(batteryMetrics.batteryHealth)%, charging=\(batteryMetrics.isCharging), temp=\(batteryMetrics.batteryTemperature)°C, cycles=\(batteryMetrics.cycleCount), timeRemaining=\(batteryMetrics.timeRemaining), externalConnected=\(batteryMetrics.externalConnected), adapterConnected=\(adapterMetrics.adapterConnected)"
+            "IOKit metrics: battery=\(batteryMetrics.batteryPercentage)%, hardwareBattery=\(batteryMetrics.hardwareBatteryPercentage)%, health=\(batteryMetrics.batteryHealth.map(String.init) ?? "unknown")%, charging=\(batteryMetrics.isCharging), temp=\(batteryMetrics.batteryTemperature)°C, cycles=\(batteryMetrics.cycleCount), timeRemaining=\(batteryMetrics.timeRemaining), externalConnected=\(batteryMetrics.externalConnected), adapterConnected=\(adapterMetrics.adapterConnected)"
         )
 
         continuation?.yield((batteryMetrics, adapterMetrics))
@@ -173,20 +176,12 @@ class IOKitService {
     ) {
         let displayedPercent = powerInfo?[kIOPSCurrentCapacityKey] as? Int ?? 0
 
-        let rawCurrentCapacity: Int =
-            getPropertyValue(batteryService, key: "AppleRawCurrentCapacity")
-            ?? 0
-        let rawMaxCapacity: Int =
-            getPropertyValue(batteryService, key: "AppleRawMaxCapacity") ?? 0
-
+        let capacities = BatteryReading.capacities(from: batteryProperties())
         let hardwarePercent: Int
-        if rawMaxCapacity > 0 {
-            hardwarePercent = (rawCurrentCapacity * 100) / rawMaxCapacity
+        if let current = capacities.current, let maximum = capacities.maximum {
+            hardwarePercent = min(100, max(0, Int(Double(current) * 100 / Double(maximum))))
         } else {
-            let currentCapacity: Int =
-                getPropertyValue(batteryService, key: "CurrentCapacity")
-                ?? displayedPercent
-            hardwarePercent = currentCapacity
+            hardwarePercent = displayedPercent
         }
 
         return (displayedPercent, hardwarePercent)
@@ -247,15 +242,37 @@ class IOKitService {
         return (0...80).contains(celsius) ? celsius : nil
     }
 
-    private func getBatteryCapacities() -> (current: Int, max: Int, design: Int) {
-        let currentCapacity: Int =
-            getPropertyValue(batteryService, key: "AppleRawCurrentCapacity")
-            ?? 0
-        let maxCapacity: Int =
-            getPropertyValue(batteryService, key: "AppleRawMaxCapacity") ?? 0
-        let designCapacity: Int =
-            getPropertyValue(batteryService, key: "DesignCapacity") ?? 0
+    private func batteryProperties() -> [String: Any] {
+        var properties: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(batteryService, &properties, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let properties else { return [:] }
+        return properties.takeRetainedValue() as NSDictionary as? [String: Any] ?? [:]
+    }
 
-        return (currentCapacity, maxCapacity, designCapacity)
+    private func startHealthRefresh() {
+        healthTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let health = await Task.detached(priority: .utility) {
+                    let process = Process()
+                    let output = Pipe()
+                    process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+                    process.arguments = ["SPPowerDataType", "-json", "-timeout", "10"]
+                    process.standardOutput = output
+                    process.standardError = FileHandle.nullDevice
+                    do {
+                        try process.run()
+                        let data = output.fileHandleForReading.readDataToEndOfFile()
+                        process.waitUntilExit()
+                        guard process.terminationStatus == 0 else { return Optional<Int>.none }
+                        return BatteryReading.reportedHealth(from: data)
+                    } catch { return nil }
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.reportedHealth = health
+                self.logger.info("Apple-reported battery health: \(health.map(String.init) ?? "unavailable", privacy: .public)")
+                self.emitMetrics()
+                do { try await Task.sleep(for: .seconds(1800)) } catch { return }
+            }
+        }
     }
 }

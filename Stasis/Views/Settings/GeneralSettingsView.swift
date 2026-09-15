@@ -8,6 +8,9 @@ struct GeneralSettingsView: View {
     @Default(.disableNotifications) var disableNotifications
     @Default(.showChargingStatusChangedNotification) var showChargingStatusChangedNotification
 
+    @State private var notificationResult: String?
+    @State private var testingNotification = false
+
     var body: some View {
         Form {
             Section("Startup") {
@@ -36,6 +39,22 @@ struct GeneralSettingsView: View {
                 Toggle("Disable all notifications", isOn: $disableNotifications)
                 Toggle("Charging status changed", isOn: $showChargingStatusChangedNotification)
                     .disabled(disableNotifications)
+                Button("Send Test Notification") {
+                    testingNotification = true
+                    Task {
+                        do {
+                            try await ChargingNotificationService.shared.sendTestNotification()
+                            notificationResult = "Test sent. Check Notification Center if no banner appears."
+                        } catch {
+                            notificationResult = error.localizedDescription
+                        }
+                        testingNotification = false
+                    }
+                }
+                .disabled(disableNotifications || testingNotification)
+                if let notificationResult {
+                    Text(notificationResult).font(.caption).foregroundStyle(.secondary)
+                }
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Notifications")
