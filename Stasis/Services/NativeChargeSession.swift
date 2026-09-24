@@ -55,6 +55,10 @@ final class NativeChargeSession {
 final class PowerUIChargeBackend: NativeChargeBackend {
     private let client: NSObject
     let limits: [Int]
+    // System Settings accepts any whole percentage in this range even though PowerUI
+    // only advertises 5% steps, so a user-chosen value such as 88% must stay readable
+    // and restorable.
+    static let acceptedRange = 80...100
     private typealias ErrorPointer = AutoreleasingUnsafeMutablePointer<NSError?>?
     static func acceptsState(enabled: Bool, limit: Int) -> Bool {
         enabled || limit == 100
@@ -90,7 +94,7 @@ final class PowerUIChargeBackend: NativeChargeBackend {
         typealias Available = @convention(c) (AnyObject, Selector, ErrorPointer) -> Unmanaged<AnyObject>?
         let values = unsafeBitCast(client.method(for: available), to: Available.self)(client, available, &error)?.takeUnretainedValue() as? [NSNumber]
         guard error == nil, let values else { throw NativeChargeError.unavailable }
-        limits = values.map(\.intValue).filter { (80...100).contains($0) }.sorted()
+        limits = values.map(\.intValue).filter { Self.acceptedRange.contains($0) }.sorted()
         guard limits.contains(80), limits.contains(100) else { throw NativeChargeError.unavailable }
         guard Self.acceptsState(enabled: enabledState == 1, limit: try readLimit()) else { throw NativeChargeError.unavailable }
     }
@@ -101,12 +105,12 @@ final class PowerUIChargeBackend: NativeChargeBackend {
         var error: NSError?
         let result = unsafeBitCast(client.method(for: selector), to: Read.self)(client, selector, &error)
         if let error { throw error }
-        guard limits.contains(Int(result)) else { throw NativeChargeError.unsupportedLimit }
+        guard Self.acceptedRange.contains(Int(result)) else { throw NativeChargeError.unsupportedLimit }
         return Int(result)
     }
 
     func writeLimit(_ value: Int) throws {
-        guard limits.contains(value) else { throw NativeChargeError.unsupportedLimit }
+        guard Self.acceptedRange.contains(value) else { throw NativeChargeError.unsupportedLimit }
         let selector = NSSelectorFromString("setMCLLimit:error:")
         typealias Write = @convention(c) (AnyObject, Selector, UInt8, ErrorPointer) -> Bool
         var error: NSError?

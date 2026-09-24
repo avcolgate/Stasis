@@ -8,7 +8,15 @@ import smc_power
 @MainActor
 @Observable
 class ChargeManager {
-    static let nativeBackend = try? PowerUIChargeBackend()
+    static let nativeBackend: PowerUIChargeBackend? = {
+        do {
+            return try PowerUIChargeBackend()
+        } catch {
+            Logger(subsystem: "com.srimanachanta.stasis", category: "ChargeManager")
+                .warning("Native charge control unavailable: \(error, privacy: .public)")
+            return nil
+        }
+    }()
     private let nativeSession: NativeChargeSession?
     var usesNativeControl: Bool { nativeSession != nil }
     var canForceDischarge: Bool {
