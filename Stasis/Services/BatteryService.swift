@@ -38,6 +38,16 @@ class BatteryService {
     private var ioKitMonitorTask: Task<Void, Never>?
     private var smcPollTask: Task<Void, Never>?
     private var delayedPollTask: Task<Void, Never>?
+    private var backgroundPollTask: Task<Void, Never>?
+
+    // macOS 27 only exposes battery temperature through SMC, and heat protection needs it
+    // to stay current while the menu (and its fast polling) is closed.
+    private static let backgroundPollInterval: Duration = .seconds(60)
+
+    // IOKit's InstantAmperage lags the battery by up to a minute on macOS 27, while SMC
+    // is live. A recent SMC sample therefore wins over any IOKit update that follows it.
+    private static let smcSampleFreshness: TimeInterval = 3
+    private var lastSMCSampleUptime: TimeInterval?
 
     private let logger = Logger(
         subsystem: "com.srimanachanta.stasis",
@@ -48,6 +58,19 @@ class BatteryService {
         logger.info("BatteryService initialized")
         xpcManager.connect()
         startIOKitMonitoring()
+        startBackgroundPolling()
+    }
+
+    private func startBackgroundPolling() {
+        backgroundPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.backgroundPollInterval)
+                guard !Task.isCancelled, let self else { return }
+                if self.smcPollTask == nil {
+                    await self.pollSMCOnce()
+                }
+            }
+        }
     }
 
     func loadCapabilities() async {
@@ -145,12 +168,13 @@ class BatteryService {
         }
 
         return await withCheckedContinuation { continuation in
-            helper.readBatteryMetrics { batteryVoltage, batteryCurrent, batteryPower in
+            helper.readBatteryMetrics { batteryVoltage, batteryCurrent, batteryPower, batteryTemperature in
                 continuation.resume(
                     returning: SMCBatteryReading(
                         batteryVoltage: batteryVoltage,
                         batteryCurrent: batteryCurrent,
-                        batteryPower: batteryPower
+                        batteryPower: batteryPower,
+                        batteryTemperature: batteryTemperature
                     )
                 )
             }
@@ -193,10 +217,22 @@ class BatteryService {
         }
 
         var updatedBattery = metrics
-        if updatedBattery.osBatteryCurrent == nil {
+        // The helper replies with zeros when the SMC read fails; a battery never reads 0 V.
+        if batteryReading.batteryVoltage.isFinite, batteryReading.batteryVoltage > 0 {
+            let sampleUptime = ProcessInfo.processInfo.systemUptime
             updatedBattery.batteryVoltage = batteryReading.batteryVoltage
             updatedBattery.batteryCurrent = batteryReading.batteryCurrent
             updatedBattery.batteryPower = batteryReading.batteryPower
+            updatedBattery.osBatteryCurrent = batteryReading.batteryCurrent
+            updatedBattery.powerSampleTime = sampleUptime
+            updatedBattery.isCharging = BatteryReading.isCharging(
+                liveCurrent: batteryReading.batteryCurrent,
+                externalConnected: updatedBattery.externalConnected
+            )
+            lastSMCSampleUptime = sampleUptime
+        }
+        if batteryReading.batteryTemperature.isFinite, batteryReading.batteryTemperature > 0 {
+            updatedBattery.batteryTemperature = batteryReading.batteryTemperature
         }
 
         var updatedAdapter = adapterMetrics
@@ -218,10 +254,25 @@ class BatteryService {
         ChargingNotificationService.shared.observe(newBatteryMetrics)
 
         var updatedBattery = newBatteryMetrics
-        if updatedBattery.osBatteryCurrent == nil {
+        let smcSampleIsFresh = lastSMCSampleUptime.map {
+            ProcessInfo.processInfo.systemUptime - $0 < Self.smcSampleFreshness
+        } ?? false
+        if smcSampleIsFresh {
+            updatedBattery.osBatteryCurrent = metrics.osBatteryCurrent
+            updatedBattery.powerSampleTime = metrics.powerSampleTime
+            updatedBattery.isCharging = BatteryReading.isCharging(
+                liveCurrent: metrics.batteryCurrent,
+                externalConnected: updatedBattery.externalConnected
+            )
+        }
+        if smcSampleIsFresh || updatedBattery.osBatteryCurrent == nil {
             updatedBattery.batteryVoltage = metrics.batteryVoltage
             updatedBattery.batteryCurrent = metrics.batteryCurrent
             updatedBattery.batteryPower = metrics.batteryPower
+        }
+        // macOS 27 no longer publishes battery temperature in IOKit; keep the SMC value.
+        if updatedBattery.batteryTemperature == 0 {
+            updatedBattery.batteryTemperature = metrics.batteryTemperature
         }
 
         if updatedBattery != metrics {
@@ -324,6 +375,8 @@ class BatteryService {
         smcPollTask = nil
         delayedPollTask?.cancel()
         delayedPollTask = nil
+        backgroundPollTask?.cancel()
+        backgroundPollTask = nil
         xpcManager.disconnect()
     }
 }

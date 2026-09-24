@@ -11,6 +11,14 @@ nonisolated enum BatteryReading {
     static func signedAmperage(_ value: NSNumber) -> Double {
         Double(value.int64Value) / 1000
     }
+
+    private static let chargingCurrentThreshold = 0.05
+
+    /// IOKit's IsCharging lags by up to a minute, while a fresh SMC current shows the actual
+    /// direction of flow. Without external power the battery can never be charging.
+    static func isCharging(liveCurrent: Double, externalConnected: Bool) -> Bool {
+        externalConnected && liveCurrent > chargingCurrentThreshold
+    }
     static func reportedHealth(from data: Data) -> Int? {
         guard let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = document["SPPowerDataType"] as? [[String: Any]] else { return nil }
