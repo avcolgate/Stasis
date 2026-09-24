@@ -53,6 +53,33 @@ nonisolated enum BatteryReading {
     }
 }
 
+/// IOKit refreshes InstantAmperage roughly once a minute, while ExternalConnected updates
+/// immediately. Until the current changes after a plug or unplug, it still describes the
+/// previous power state and would, for example, keep reporting discharge after plugging in.
+nonisolated struct StaleCurrentFilter {
+    static let maximumStaleness: Double = 120
+
+    private var lastConnected: Bool?
+    private var currentAtConnectionChange: Int64?
+    private var connectionChangeTime: Double?
+
+    mutating func filter(currentMilliamps: Int64, connected: Bool, now: Double) -> Int64? {
+        if let lastConnected, lastConnected != connected {
+            currentAtConnectionChange = currentMilliamps
+            connectionChangeTime = now
+        }
+        lastConnected = connected
+        if let staleCurrent = currentAtConnectionChange, let changeTime = connectionChangeTime {
+            if currentMilliamps == staleCurrent && now - changeTime < Self.maximumStaleness {
+                return nil
+            }
+            currentAtConnectionChange = nil
+            connectionChangeTime = nil
+        }
+        return currentMilliamps
+    }
+}
+
 nonisolated struct ChargingTransitionTracker {
     private var previous: Bool?
 

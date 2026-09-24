@@ -11,6 +11,7 @@ class IOKitService {
     private var batteryService: io_service_t = 0
     private var healthTask: Task<Void, Never>?
     private var reportedHealth: Int?
+    private var staleCurrentFilter = StaleCurrentFilter()
 
     private var continuation: AsyncStream<(BatteryMetrics, AdapterMetrics)>.Continuation?
 
@@ -141,11 +142,18 @@ class IOKitService {
         batteryMetrics.fullChargeCapacityMAh = BatteryReading.fullChargeCapacityMAh(from: properties)
         if let current = (properties["InstantAmperage"] ?? properties["Amperage"]) as? NSNumber,
            let voltage = properties["Voltage"] as? NSNumber {
-            batteryMetrics.osBatteryCurrent = BatteryReading.signedAmperage(current)
-            batteryMetrics.batteryCurrent = BatteryReading.signedAmperage(current)
+            let now = ProcessInfo.processInfo.systemUptime
             batteryMetrics.batteryVoltage = voltage.doubleValue / 1000
-            batteryMetrics.batteryPower = batteryMetrics.batteryCurrent * batteryMetrics.batteryVoltage
-            batteryMetrics.powerSampleTime = ProcessInfo.processInfo.systemUptime
+            if staleCurrentFilter.filter(
+                currentMilliamps: current.int64Value,
+                connected: batteryMetrics.externalConnected,
+                now: now
+            ) != nil {
+                batteryMetrics.osBatteryCurrent = BatteryReading.signedAmperage(current)
+                batteryMetrics.batteryCurrent = BatteryReading.signedAmperage(current)
+                batteryMetrics.batteryPower = batteryMetrics.batteryCurrent * batteryMetrics.batteryVoltage
+                batteryMetrics.powerSampleTime = now
+            }
         }
 
         adapterMetrics.adapterConnected = isAdapterConnected()
