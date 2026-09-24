@@ -104,9 +104,8 @@ class MenuBuilder {
         }
         if Defaults[.showBatteryTemperature] {
             items.append(
-                createInfoItem(
-                    label: String(localized: "Battery Temperature"),
-                    keyPath: \.batteryTemperatureText
+                createMenuItem(
+                    view: BatteryTemperatureInfoView(viewModel: viewModel)
                 )
             )
         }
@@ -217,8 +216,18 @@ struct BatteryMainInfoView: View {
     var body: some View {
         BatteryMainInfo(
             label: String(localized: "Battery"),
-            value: viewModel.batteryPercentageText
+            value: viewModel.batteryPercentageText,
+            percentage: viewModel.displayPercentage,
+            chargeLimit: viewModel.chargeLimitMarker,
+            barColor: barColor
         )
+    }
+
+    private var barColor: Color {
+        if viewModel.isCharging { return .green }
+        if viewModel.isLowPowerModeEnabled { return .yellow }
+        if viewModel.displayPercentage <= 10 { return .red }
+        return .primary.opacity(0.6)
     }
 }
 
@@ -229,6 +238,26 @@ struct BatteryAdditionalInfoObserverView: View {
 
     var body: some View {
         BatteryAdditionalInfo(label: label, value: viewModel[keyPath: keyPath])
+    }
+}
+
+struct BatteryTemperatureInfoView: View {
+    let viewModel: MenuViewModel
+
+    var body: some View {
+        BatteryAdditionalInfo(
+            label: String(localized: "Battery Temperature"),
+            value: viewModel.batteryTemperatureText,
+            valueColor: color
+        )
+    }
+
+    private var color: Color? {
+        switch viewModel.temperatureLevel {
+        case .normal: nil
+        case .warm: .orange
+        case .hot: .red
+        }
     }
 }
 

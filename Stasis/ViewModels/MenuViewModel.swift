@@ -16,9 +16,10 @@ class MenuViewModel {
     var timeRemainingText: String = "Calculating..."
     var uptimeText: String = "0m"
     var batteryModeText: String = "Unknown"
-    var batteryTemperatureText: String = "0°C"
-    var externalInputText: String = "0V @ 0A"
-    var internalInputText: String = "0V @ 0A"
+    var batteryTemperatureText: String = "0 °C"
+    var temperatureLevel: TemperatureLevel = .normal
+    var externalInputText: String = "0 V · 0 A · 0 W"
+    var internalInputText: String = "0 V · 0 A · 0 W"
     var cycleCountText: String = "0"
     var batteryHealthText: String = "Unknown"
 
@@ -30,6 +31,7 @@ class MenuViewModel {
     var powerSource: PowerSource = .battery
     var isCharging: Bool = false
     var isLowPowerModeEnabled: Bool = false
+    var chargeLimitMarker: Int?
 
     var chargeLimitOverrideActive: Bool { chargeManager.chargeLimitOverrideActive }
     var forceDischargeActive: Bool { chargeManager.forceDischargeActive }
@@ -151,16 +153,21 @@ class MenuViewModel {
         }
 
         batteryTemperatureText =
-            "\(metrics.batteryTemperature.formatted(.number.precision(.fractionLength(1))))°C"
+            "\(metrics.batteryTemperature.formatted(.number.precision(.fractionLength(1)))) °C"
+        temperatureLevel = TemperatureLevel(
+            temperature: metrics.batteryTemperature,
+            limit: Defaults[.heatProtectionLimit]
+        )
 
-        let voltageFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(2))
-        let currentFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(2))
-
-        externalInputText =
-            "\(adapter.adapterVoltage.formatted(voltageFormat))V @ \(adapter.adapterCurrent.formatted(currentFormat))A"
-
-        internalInputText =
-            "\(metrics.batteryVoltage.formatted(voltageFormat))V @ \(metrics.batteryCurrent.formatted(currentFormat))A"
+        // Unplugged ports still read a few hundred millivolts of noise.
+        externalInputText = metrics.externalConnected
+            ? Self.electricalText(
+                voltage: adapter.adapterVoltage, current: adapter.adapterCurrent, power: adapter.adapterPower
+            )
+            : "Not connected"
+        internalInputText = Self.electricalText(
+            voltage: metrics.batteryVoltage, current: metrics.batteryCurrent, power: metrics.batteryPower
+        )
 
         batteryPower = metrics.batteryPower
         adapterPower = adapter.adapterPower
@@ -171,15 +178,23 @@ class MenuViewModel {
 
         if Defaults[.manageCharging] {
             let target = chargeManager.chargeLimitOverrideActive ? 100 : Defaults[.chargeLimit]
+            chargeLimitMarker = target
             timeRemainingText = targetTimeEstimator.update(
                 metrics, target: target, now: ProcessInfo.processInfo.systemUptime
             ).text
         } else {
+            chargeLimitMarker = nil
             targetTimeEstimator.reset()
         }
 
         cycleCountText = "\(metrics.cycleCount)"
         batteryHealthText = metrics.batteryHealth.map { "\(metrics.batteryHealthIsEstimated ? "~" : "")\($0)%" } ?? "Unknown"
+    }
+
+    private static func electricalText(voltage: Double, current: Double, power: Double) -> String {
+        let twoDecimals = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(2))
+        let oneDecimal = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(1))
+        return "\(voltage.formatted(twoDecimals)) V · \(current.formatted(twoDecimals)) A · \(abs(power).formatted(oneDecimal)) W"
     }
 
     private func updateUptimeText() {

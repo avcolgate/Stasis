@@ -11,3 +11,5 @@ swiftc Stasis/Services/NativeChargeSession.swift Tests/NativeChargeTests.swift -
 "$build_directory/native"
 swiftc Stasis/Models/BatteryMetrics.swift Stasis/Models/TargetTimeEstimator.swift Tests/TargetTimeTests.swift -o "$build_directory/target-time"
 "$build_directory/target-time"
+swiftc -parse-as-library Stasis/Models/BatteryMetrics.swift Stasis/Models/ChargingMode.swift Stasis/Models/PowerSource.swift Stasis/Views/PowerSankeyView.swift Tests/PowerDiagramTests.swift -o "$build_directory/power-diagram"
+"$build_directory/power-diagram"

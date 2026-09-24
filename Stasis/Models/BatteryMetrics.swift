@@ -35,3 +35,22 @@ struct BatteryControlState: Equatable {
     var adapterConnected: Bool = false
     var batteryTemperature: Double = 0
 }
+
+enum TemperatureLevel {
+    case normal, warm, hot
+
+    private static let warningMargin = 5.0
+
+    init(temperature: Double, limit: Int) {
+        let limit = Double(limit)
+        if temperature <= 0 {
+            self = .normal
+        } else if temperature >= limit {
+            self = .hot
+        } else if temperature >= limit - Self.warningMargin {
+            self = .warm
+        } else {
+            self = .normal
+        }
+    }
+}
